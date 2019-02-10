@@ -33,10 +33,6 @@ var (
 
 
 func entryPoint(ctx *cli.Context) error {
-	// debug
-	fmt.Println(opbot.HelpMsg())
-	//return nil
-
 	opfile := ctx.String("opfile")
 	cfg := &irc.Config{
 		Server:   ctx.String("server"),

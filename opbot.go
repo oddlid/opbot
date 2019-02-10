@@ -19,7 +19,7 @@ NOTE: This plugin does not work as the normal plugins for "go-chat-bot",
 TODO:
 - Make bot check for calling user being in oplist before accepting modifying commands. "ls" ok for all.
 - op/deop user right away when being added to or removed from oplist, if user online
-- Make it possible to customize welcome message
+- [v] Make it possible to customize welcome message
 - give feedback on wrong arguments?
 */
 
@@ -35,8 +35,8 @@ import (
 	"time"
 
 	log "github.com/Sirupsen/logrus"
-	"github.com/go-chat-bot/bot"
-	"github.com/go-chat-bot/bot/irc"
+	"github.com/oddlid/bot"
+	"github.com/oddlid/bot/irc"
 	ircevent "github.com/thoj/go-ircevent"
 )
 
@@ -47,8 +47,10 @@ const (
 	LS         string = "LS"
 	RELOAD     string = "RELOAD"
 	CLEAR      string = "CLEAR"
+	WMSG       string = "WMSG"
 	PLUGIN     string = "OPBot"
 	DEF_OPFILE string = "/tmp/opbot.json"
+	DEF_WMSG   string = "Welcome back, %s"
 )
 
 var (
@@ -61,7 +63,8 @@ var (
 
 type Channel struct {
 	sync.RWMutex
-	OPs map[string]bool `json:"ops"`
+	WelcomeMsg string          `json:"wmsg"`
+	OPs        map[string]bool `json:"ops"`
 }
 
 type OPData struct {
@@ -75,7 +78,8 @@ func InitBot(b *bot.Bot, cfg *irc.Config, conn *ircevent.Connection, opfile stri
 	_cfg = cfg
 	_conn = conn
 	_opfile = opfile
-	reload() // initializes _ops
+	reload()                 // initializes _ops
+	bot.UseUnidecode = false // needed if we want to save messages with unicode characters
 
 	_conn.AddCallback(JOIN, onJOIN)
 
@@ -84,29 +88,35 @@ func InitBot(b *bot.Bot, cfg *irc.Config, conn *ircevent.Connection, opfile stri
 	return nil
 }
 
-func register() {
+// Having this as a separate func makes it easier to debug output in dev
+func HelpMsg() string {
 	// Arguments:
-	//	add <nick>
-	//	del <nick>
-	//	ls  [nick]
+	//	add  <nick>
+	//	del  <nick>
+	//	ls   [nick]
+	//	wmsg <message>
 	//	reload
 	//	clear
 	n := "nick"
-	argex := fmt.Sprintf(
+	return fmt.Sprintf(
 		`arguments...
 Where arguments can be one of:
-  %s <%s>
-  %s <%s>
-  %s  [%s]
+  %s   <%s>
+  %s   <%s>
+  %s    [%s]
+  %s  <GET|SET> <message>
   %s
   %s
 `,
-		ADD, n, DEL, n, LS, n, RELOAD, CLEAR,
+		ADD, n, DEL, n, LS, n, WMSG, RELOAD, CLEAR,
 	)
+}
+
+func register() {
 	bot.RegisterCommand(
 		"op",
 		"Add or remove nicks for auto-OP",
-		argex,
+		HelpMsg(),
 		op,
 	)
 }
@@ -211,6 +221,13 @@ func (c *Channel) Empty() bool {
 	return len(c.OPs) == 0
 }
 
+func (c *Channel) GetWMsg(nick string) string {
+	if nick != "" && strings.Index(c.WelcomeMsg, "%s") > -1 {
+		return fmt.Sprintf(c.WelcomeMsg, nick)
+	}
+	return c.WelcomeMsg
+}
+
 func onJOIN(e *ircevent.Event) {
 	if e.Nick == _conn.GetNick() {
 		log.Debugf("%s: Seems it's myself joining. e.Nick: %s", PLUGIN, e.Nick)
@@ -232,16 +249,18 @@ func onJOIN(e *ircevent.Event) {
 	log.Debugf("%s: Setting mode %q for %q in %q", PLUGIN, "+o", e.Nick, e.Arguments[0])
 	_conn.Mode(e.Arguments[0], "+o", e.Nick)
 
-	// Welcome the OP user
-	_bot.SendMessage(
-		e.Arguments[0], // will be the channel name
-		fmt.Sprintf("Welcome back, %s", e.Nick),
-		&bot.User{
-			ID:       e.Host,
-			Nick:     e.Nick,
-			RealName: e.User,
-		},
-	)
+	// Welcome the OP user, if welcome message is configured
+	if c.WelcomeMsg != "" {
+		_bot.SendMessage(
+			e.Arguments[0], // will be the channel name
+			c.GetWMsg(e.Nick),
+			&bot.User{
+				ID:       e.Host,
+				Nick:     e.Nick,
+				RealName: e.User,
+			},
+		)
+	}
 }
 
 func reload() {
@@ -300,6 +319,23 @@ func del(channel, nick string) (string, error) {
 	return fmt.Sprintf("%s: Nick %q removed from OPs list", PLUGIN, nick), err
 }
 
+func wmsg(channel, action, msg string) (string, error) {
+	var err error
+	if match(action, "SET") {
+		_ops.Get(channel).WelcomeMsg = msg
+		err = _ops.SaveFile(_opfile)
+		if err != nil {
+			log.Error(err)
+		}
+	}
+	return fmt.Sprintf(
+		"%s: Welcome message for channel %s: %q",
+		PLUGIN,
+		channel,
+		_ops.Get(channel).WelcomeMsg,
+	), err
+}
+
 func safeArgs(num int, args []string) []string {
 	alen := len(args)
 	res := make([]string, num)
@@ -341,6 +377,8 @@ func op(cmd *bot.Cmd) (string, error) {
 		return add(cmd.Channel, args[1])
 	} else if arg(DEL) {
 		return del(cmd.Channel, args[1])
+	} else if arg(WMSG) {
+		return wmsg(cmd.Channel, args[1], strings.Join(cmd.Args[2:len(cmd.Args)], " "))
 	} else if arg(RELOAD) {
 		reload()
 		retmsg = PLUGIN + ": OPs DB reloaded"

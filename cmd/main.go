@@ -7,7 +7,7 @@ import (
 
 	log "github.com/Sirupsen/logrus"
 	//"github.com/go-chat-bot/bot"
-	"github.com/go-chat-bot/bot/irc"
+	"github.com/oddlid/bot/irc"
 	"github.com/oddlid/opbot"
 	"github.com/urfave/cli"
 )
@@ -33,6 +33,10 @@ var (
 
 
 func entryPoint(ctx *cli.Context) error {
+	// debug
+	fmt.Println(opbot.HelpMsg())
+	//return nil
+
 	opfile := ctx.String("opfile")
 	cfg := &irc.Config{
 		Server:   ctx.String("server"),

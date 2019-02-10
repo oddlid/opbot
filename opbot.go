@@ -17,10 +17,10 @@ NOTE: This plugin does not work as the normal plugins for "go-chat-bot",
 
 /*
 TODO:
-- Make bot check for calling user being in oplist before accepting modifying commands. "ls" ok for all.
-- op/deop user right away when being added to or removed from oplist, if user online
-- [v] Make it possible to customize welcome message
-- give feedback on wrong arguments?
+- [*] Make bot check for calling user being in oplist before accepting modifying commands. "ls" ok for all.
+- [*] op/deop user right away when being added to or removed from oplist, if user online
+- [*] Make it possible to customize welcome message
+- [ ] give feedback on wrong arguments?
 */
 
 import (
@@ -303,6 +303,7 @@ func add(channel, nick string) (string, error) {
 	if err != nil {
 		log.Error(err)
 	}
+	_conn.Mode(channel, "+o", nick) // try to OP right away
 	return fmt.Sprintf("%s: Nick %q added to OPs list", PLUGIN, nick), err
 }
 
@@ -316,6 +317,7 @@ func del(channel, nick string) (string, error) {
 	if err != nil {
 		log.Error(err)
 	}
+	_conn.Mode(channel, "-o", nick) // try to DEOP right away
 	return fmt.Sprintf("%s: Nick %q removed from OPs list", PLUGIN, nick), err
 }
 
@@ -349,13 +351,34 @@ func safeArgs(num int, args []string) []string {
 	return res
 }
 
+func okCmd(channel, nick, cmd, arg string) bool {
+	c := _ops.Get(channel)
+	if c.Empty() {
+		// Need this "hack/hole", otherwise one can't start to fill the list
+		return true
+	}
+	if c.Has(nick) {
+		return true
+	}
+	if match(cmd, LS) {
+		return true
+	}
+	if match(cmd, WMSG) {
+		if match(arg, "GET") {
+			return true
+		}
+	}
+	return false
+}
+
 func op(cmd *bot.Cmd) (string, error) {
 	// Arguments:
-	//	add <nick>
-	//	del <nick>
-	//	ls  [nick]
-	//	reload
-	//	clear
+	//  add  <nick>
+	//  del  <nick>
+	//  ls   [nick]
+	//  wmsg <get|set> <message>
+	//  reload
+	//  clear
 	//
 
 	alen := len(cmd.Args)
@@ -364,6 +387,15 @@ func op(cmd *bot.Cmd) (string, error) {
 	}
 
 	args := safeArgs(2, cmd.Args) // 2 is the longest possible set of valid args
+
+	// check if user is allowed to run this command (is in op list, or read-only command)
+	// Anyone is allowed anything if the list is empty
+	if !okCmd(cmd.Channel, cmd.User.Nick, args[0], args[1]) {
+		return fmt.Sprintf("%s: You must be in the OPs list to run this command", cmd.User.Nick), nil 
+			//fmt.Errorf("%s tried to run %q without permission", cmd.User.Nick, strings.Join(args, " "))
+	}
+
+
 	var retmsg string
 
 	// just a little helper to shorten code later

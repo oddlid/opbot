@@ -1,6 +1,6 @@
 BINARY := opbot.bin
 VERSION := 2019-02-14
-SOURCES := $(wildcard *.go)
+SOURCES := main.go
 DEPS :=
 COMMIT_ID := $(shell git describe --tags --always)
 BUILD_TIME := $(shell go run -tags make main_make.go)

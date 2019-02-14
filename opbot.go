@@ -139,7 +139,7 @@ func (o *OPData) Load(r io.Reader) error {
 func (o *OPData) LoadFile(filename string) *OPData {
 	file, err := os.Open(filename)
 	if err != nil {
-		log.Errorf("%s: OPData.LoadFile(): Error opening %q - %s", PLUGIN, filename, err.Error())
+		log.Errorf("%s: OPData.LoadFile() Error: %q", PLUGIN, err.Error())
 		return o
 	}
 	defer file.Close()
@@ -148,6 +148,7 @@ func (o *OPData) LoadFile(filename string) *OPData {
 		log.Error(err)
 		return NewOPData()
 	}
+	log.Infof("%s: OPs list (re)loaded from file %q", PLUGIN, filename)
 	return o
 }
 
@@ -171,7 +172,7 @@ func (o *OPData) SaveFile(filename string) error {
 	if err != nil {
 		return err
 	}
-	log.Debugf("%s: Saved %d bytes to %q", PLUGIN, n, filename)
+	log.Infof("%s: Saved %d bytes to %q", PLUGIN, n, filename)
 	return nil
 }
 

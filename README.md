@@ -2,8 +2,8 @@
 
 A very simple IRC bot for maintaining OPs in a channel.
 
-The bot is implemented as a library, so you can include it in your own bot based on `github.com/go-chat-bot/bot`.
-For a stand-alone version, see [cmd/main.go](cmd/main.go).
+The bot is implemented as a library, so you can include it in your own bot based on `github.com/oddlid/bot` (a fork of `github.com/go-chat-bot/bot`).
+For a stand-alone version, see [github.com/oddlid/opbot/cmd/](cmd/).
 
 Installation
 ------------
@@ -18,7 +18,7 @@ Usage
 
 To create and use an instance of this bot, you need to:
 
-* Import the package `github.com/go-chat-bot/bot/irc`
+* Import the package `github.com/oddlid/bot/irc`
 * Import the package `github.com/oddlid/opbot`
 * Fill the `irc.Config` struct
 * Call `irc.SetUpConn` with the `irc.Config` struct
@@ -33,7 +33,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/go-chat-bot/bot/irc"
+	"github.com/oddlid/bot/irc"
 	"github.com/oddlid/opbot"
 )
 
@@ -57,7 +57,7 @@ func main() {
 	irc.Run(nil) // pass nil as we've ran SetUpConn with cfg
 }
 ```
-Once the bot is in your irc channel, you can use the following commands to interact with it:
+Once the bot is in your irc channel, you can interact with it like this:
 
 ```
 16:57  @Oddlid | !help
@@ -67,9 +67,10 @@ Once the bot is in your irc channel, you can use the following commands to inter
 16:57    opbot | Description: Add or remove nicks for auto-OP
 16:57    opbot | Usage: !op arguments...
 16:57    opbot | Where arguments can be one of:
-16:57    opbot |   ADD <nick>
-16:57    opbot |   DEL <nick>
-16:58    opbot |   LS  [nick]
+16:57    opbot |   ADD  <nick>
+16:57    opbot |   DEL  <nick>
+16:58    opbot |   LS   [nick]
+16:58    opbot |   WMSG <GET|SET> <message>
 16:58    opbot |   RELOAD
 16:58    opbot |   CLEAR
 17:20  @Oddlid | !op add Oddlid
@@ -84,4 +85,7 @@ Once the bot is in your irc channel, you can use the following commands to inter
 17:26    opbot | OPBot: Nick "Oddlid" removed from OPs list
 17:27  @Oddlid | !op ls
 17:27    opbot | OPBot: No configured OPs for channel "#channel"
+17:27  @Oddlid | !op wmsg set Welcome back, dear %s
+17:27    opbot | OPBot: Welcome message for channel #channel: "Welcome back, dear %s"
+
 ```

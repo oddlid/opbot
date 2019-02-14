@@ -1,4 +1,4 @@
-BINARY := opbot.bin
+BINARY := opbot
 VERSION := 2019-02-14
 SOURCES := main.go
 DEPS :=
@@ -10,10 +10,13 @@ ifeq ($(UNAME), Linux)
         DFLAG := -d
 endif
 
-.DEFAULT_GOAL: $(BINARY)
+.DEFAULT_GOAL: $(BINARY).bin
 
-$(BINARY): $(SOURCES) $(DEPS)
+$(BINARY).bin: $(SOURCES) $(DEPS)
 	env CGO_ENABLED=0 go build ${LDFLAGS} -o $@ ${SOURCES}
+
+$(BINARY).exe: $(SOURCES) $(DEPS)
+	env CGO_ENABLED=0 GOOS=windows GOARCH=386 go build ${LDFLAGS} -o $@ ${SOURCES}
 
 .PHONY: install
 install:
@@ -21,4 +24,5 @@ install:
 
 .PHONY: clean
 clean:
-	if [ -f ${BINARY} ]; then rm -f ${BINARY}; fi
+	if [ -f ${BINARY}.bin ]; then rm -f ${BINARY}.bin; fi
+	if [ -f ${BINARY}.exe ]; then rm -f ${BINARY}.exe; fi

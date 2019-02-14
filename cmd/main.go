@@ -1,3 +1,5 @@
+// +build !make
+
 package main
 
 import (

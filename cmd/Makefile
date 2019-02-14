@@ -3,8 +3,12 @@ VERSION := 2019-02-14
 SOURCES := $(wildcard *.go)
 DEPS :=
 COMMIT_ID := $(shell git describe --tags --always)
-BUILD_TIME := $(shell date +%FT%T%:z)
-LDFLAGS = -ldflags "-X main.VERSION=${VERSION} -X main.BUILD_DATE=${BUILD_TIME} -X main.COMMIT_ID=${COMMIT_ID} -d -s -w"
+BUILD_TIME := $(shell go run -tags make main_make.go)
+LDFLAGS = -ldflags "-X main.VERSION=${VERSION} -X main.BUILD_DATE=${BUILD_TIME} -X main.COMMIT_ID=${COMMIT_ID} -s -w ${DFLAG}"
+
+ifeq ($(UNAME), Linux)
+        DFLAG := -d
+endif
 
 .DEFAULT_GOAL: $(BINARY)
 

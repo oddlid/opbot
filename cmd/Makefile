@@ -1,7 +1,7 @@
 BINARY := opbot.bin
-VERSION := 2019-02-10
+VERSION := 2019-02-14
 SOURCES := $(wildcard *.go)
-DEPS := 
+DEPS :=
 COMMIT_ID := $(shell git describe --tags --always)
 BUILD_TIME := $(shell date +%FT%T%:z)
 LDFLAGS = -ldflags "-X main.VERSION=${VERSION} -X main.BUILD_DATE=${BUILD_TIME} -X main.COMMIT_ID=${COMMIT_ID} -d -s -w"

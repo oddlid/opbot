@@ -24,29 +24,25 @@ TODO:
 */
 
 import (
-	"encoding/json"
 	"fmt"
-	"io"
-	"io/ioutil"
-	"os"
-	"sort"
 	"strings"
-	"sync"
-	"time"
 
 	log "github.com/Sirupsen/logrus"
-	"github.com/oddlid/bot"
-	"github.com/oddlid/bot/irc"
+	"github.com/go-chat-bot/bot"
+	"github.com/go-chat-bot/bot/irc"
 	ircevent "github.com/thoj/go-ircevent"
 )
 
 const (
-	JOIN       string = "JOIN"
 	ADD        string = "ADD"
-	DEL        string = "DEL"
-	LS         string = "LS"
-	RELOAD     string = "RELOAD"
 	CLEAR      string = "CLEAR"
+	DEL        string = "DEL"
+	GET        string = "GET"
+	JOIN       string = "JOIN"
+	LS         string = "LS"
+	MASK       string = "MASK"
+	RELOAD     string = "RELOAD"
+	SET        string = "SET"
 	WMSG       string = "WMSG"
 	PLUGIN     string = "OPBot"
 	DEF_OPFILE string = "/tmp/opbot.json"
@@ -59,57 +55,23 @@ var (
 	_conn   *ircevent.Connection
 	_ops    *OPData
 	_opfile string
+	_wchan  = make(chan *HostMask)
 )
-
-type Channel struct {
-	sync.RWMutex
-	WelcomeMsg string          `json:"wmsg"`
-	OPs        map[string]bool `json:"ops"`
-}
-
-type OPData struct {
-	sync.RWMutex
-	Modified time.Time           `json:"modified"`
-	Channels map[string]*Channel `json:"channels"`
-}
 
 func InitBot(b *bot.Bot, cfg *irc.Config, conn *ircevent.Connection, opfile string) error {
 	_bot = b
 	_cfg = cfg
 	_conn = conn
 	_opfile = opfile
-	reload()                 // initializes _ops
-	bot.UseUnidecode = false // needed if we want to save messages with unicode characters
+	reload() // initializes _ops
 
 	_conn.AddCallback(JOIN, onJOIN)
+	_conn.AddCallback("311", on311) // reply from whois when nick found
+	_conn.AddCallback("401", on401) // reply from whois when nick not found
 
 	register()
 
 	return nil
-}
-
-// Having this as a separate func makes it easier to debug output in dev
-func HelpMsg() string {
-	// Arguments:
-	//	add  <nick>
-	//	del  <nick>
-	//	ls   [nick]
-	//	wmsg <message>
-	//	reload
-	//	clear
-	n := "nick"
-	return fmt.Sprintf(
-		`arguments...
-Where arguments can be one of:
-  %s   <%s>
-  %s   <%s>
-  %s    [%s]
-  %s  <GET|SET> <message>
-  %s
-  %s
-`,
-		ADD, n, DEL, n, LS, n, WMSG, RELOAD, CLEAR,
-	)
 }
 
 func register() {
@@ -121,112 +83,36 @@ func register() {
 	)
 }
 
-func NewOPData() *OPData {
-	return &OPData{
-		Modified: time.Now(),
-		Channels: make(map[string]*Channel),
+// 311 is the reply to WHOIS when nick found
+func on311(e *ircevent.Event) {
+	//log.Debugf("%+v", e)
+	hm := &HostMask{
+		Nick:     e.Arguments[1],
+		UserID:   e.Arguments[2],
+		Host:     e.Arguments[3],
+		RealName: e.Arguments[5],
 	}
-}
-
-func (o *OPData) Load(r io.Reader) error {
-	jb, err := ioutil.ReadAll(r)
-	if err != nil {
-		return err
+	select {
+	case _wchan <- hm:
+		log.Debugf("Sent hostmask object on _wchan")
+	default:
+		log.Debugf("Unable to send on _wchan")
 	}
-	return json.Unmarshal(jb, o)
+	//	hmstr := hm.String()
+	//	hmparsed := hostmask(hmstr)
+	//	log.Debugf("Hostmask orig: %#v", hm)
+	//	log.Debugf("Hostmask string: %s", hmstr)
+	//	log.Debugf("HostMask struct, parsed back: %#v", hmparsed)
 }
 
-func (o *OPData) LoadFile(filename string) *OPData {
-	file, err := os.Open(filename)
-	if err != nil {
-		log.Errorf("%s: OPData.LoadFile() Error: %q", PLUGIN, err.Error())
-		return o
+// 401 is the reply from WHOIS when nick NOT found
+func on401(e *ircevent.Event) {
+	select {
+	case _wchan <- nil:
+		log.Debugf("Sent NIL hostmask object on _wchan")
+	default:
+		log.Debugf("Unable to send on _wchan")
 	}
-	defer file.Close()
-	err = o.Load(file)
-	if err != nil {
-		log.Error(err)
-		return NewOPData()
-	}
-	log.Infof("%s: OPs list (re)loaded from file %q", PLUGIN, filename)
-	return o
-}
-
-func (o *OPData) Save(w io.Writer) (int, error) {
-	o.Modified = time.Now() // update timestamp
-	jb, err := json.MarshalIndent(o, "", "\t")
-	if err != nil {
-		return 0, err
-	}
-	jb = append(jb, '\n')
-	return w.Write(jb)
-}
-
-func (o *OPData) SaveFile(filename string) error {
-	file, err := os.Create(filename)
-	if err != nil {
-		return err
-	}
-	defer file.Close()
-	n, err := o.Save(file)
-	if err != nil {
-		return err
-	}
-	log.Infof("%s: Saved %d bytes to %q", PLUGIN, n, filename)
-	return nil
-}
-
-func (o *OPData) Get(channel string) *Channel {
-	c, found := o.Channels[channel]
-	if !found {
-		log.Debugf("%s: Creating channel %q with empty oplist", PLUGIN, channel)
-		c = &Channel{
-			OPs: make(map[string]bool),
-		}
-		o.Channels[channel] = c
-	}
-	return c
-}
-
-func (c *Channel) Has(nick string) bool {
-	c.RLock()
-	_, found := c.OPs[nick]
-	c.RUnlock()
-	return found
-}
-
-func (c *Channel) Add(nick string) {
-	c.Lock()
-	c.OPs[nick] = true
-	c.Unlock()
-}
-
-func (c *Channel) Remove(nick string) {
-	c.Lock()
-	delete(c.OPs, nick)
-	c.Unlock()
-}
-
-func (c *Channel) Nicks() []string {
-	nicks := make([]string, 0, len(c.OPs))
-	c.RLock()
-	for k := range c.OPs {
-		nicks = append(nicks, k)
-	}
-	c.RUnlock()
-	sort.Strings(nicks)
-	return nicks
-}
-
-func (c *Channel) Empty() bool {
-	return len(c.OPs) == 0
-}
-
-func (c *Channel) GetWMsg(nick string) string {
-	if nick != "" && strings.Index(c.WelcomeMsg, "%s") > -1 {
-		return fmt.Sprintf(c.WelcomeMsg, nick)
-	}
-	return c.WelcomeMsg
 }
 
 func onJOIN(e *ircevent.Event) {
@@ -243,6 +129,11 @@ func onJOIN(e *ircevent.Event) {
 
 	if !c.Has(e.Nick) {
 		log.Debugf("%s: %s not in OPs list, ignoring", PLUGIN, e.Nick)
+		return
+	}
+
+	if !c.MatchHostMask(e.Nick, e.Source) {
+		log.Debugf("%s: No match on hostmask %q for nick %q", PLUGIN, e.Source, e.Nick)
 		return
 	}
 
@@ -264,22 +155,6 @@ func onJOIN(e *ircevent.Event) {
 	}
 }
 
-func reload() {
-	_ops = NewOPData().LoadFile(_opfile)
-}
-
-func clear() {
-	_ops = NewOPData()
-	err := _ops.SaveFile(_opfile)
-	if err != nil {
-		log.Error(err)
-	}
-}
-
-func match(in, compare string) bool {
-	return strings.ToUpper(in) == compare
-}
-
 func ls(channel, nick string) string {
 	c := _ops.Get(channel)
 	if c.Empty() {
@@ -299,13 +174,39 @@ func add(channel, nick string) (string, error) {
 		emsg := PLUGIN + ": Cannot add empty nick"
 		return emsg, fmt.Errorf(emsg)
 	}
-	_ops.Get(channel).Add(nick)
-	err := _ops.SaveFile(_opfile)
-	if err != nil {
-		log.Error(err)
-	}
-	_conn.Mode(channel, "+o", nick) // try to OP right away
-	return fmt.Sprintf("%s: Nick %q added to OPs list", PLUGIN, nick), err
+
+	// get info about user/nick
+	go func() {
+		log.Debugf("Goroutine waiting to read from _wchan...")
+		hm := <-_wchan
+
+		if hm == nil {
+			log.Debugf("Got NIL hostmask back on _wchan. %q does not exist on server", nick)
+			_bot.SendMessage(
+				channel,
+				fmt.Sprintf("Error adding %q - no such nick", nick),
+				nil,
+			)
+			return
+		}
+
+		log.Debugf("Got back info about nick %q: %#v", nick, hm)
+
+		_ops.Get(channel).Add(nick, hm.String())
+
+		err := _ops.SaveFile(_opfile)
+		if err != nil {
+			log.Error(err)
+		}
+
+		_conn.Mode(channel, "+o", nick) // try to OP right away
+	}()
+
+
+	log.Debugf("Calling WHOIS on nick %q", nick)
+	_conn.Whois(nick)
+
+	return fmt.Sprintf("%s: Adding %q to OPs list", PLUGIN, nick), nil
 }
 
 func del(channel, nick string) (string, error) {
@@ -339,63 +240,24 @@ func wmsg(channel, action, msg string) (string, error) {
 	), err
 }
 
-func safeArgs(num int, args []string) []string {
-	alen := len(args)
-	res := make([]string, num)
-	for i := 0; i < num; i++ {
-		if i < alen {
-			res[i] = args[i]
-		} else {
-			res[i] = ""
-		}
-	}
-	return res
-}
-
-func okCmd(channel, nick, cmd, arg string) bool {
-	c := _ops.Get(channel)
-	if c.Empty() {
-		// Need this "hack/hole", otherwise one can't start to fill the list
-		return true
-	}
-	if c.Has(nick) {
-		return true
-	}
-	if match(cmd, LS) {
-		return true
-	}
-	if match(cmd, WMSG) {
-		if match(arg, "GET") {
-			return true
-		}
-	}
-	return false
+func mask(channel, action, nick, hostmask string) (string, error) {
+	return "", nil
 }
 
 func op(cmd *bot.Cmd) (string, error) {
-	// Arguments:
-	//  add  <nick>
-	//  del  <nick>
-	//  ls   [nick]
-	//  wmsg <get|set> <message>
-	//  reload
-	//  clear
-	//
-
 	alen := len(cmd.Args)
 	if alen == 0 {
 		return PLUGIN + ": Arguments missing", nil
 	}
 
-	args := safeArgs(2, cmd.Args) // 2 is the longest possible set of valid args
+	args := safeArgs(4, cmd.Args) // 4 is the longest possible set of valid args
 
 	// check if user is allowed to run this command (is in op list, or read-only command)
 	// Anyone is allowed anything if the list is empty
 	if !okCmd(cmd.Channel, cmd.User.Nick, args[0], args[1]) {
-		return fmt.Sprintf("%s: You must be in the OPs list to run this command", cmd.User.Nick), nil 
-			//fmt.Errorf("%s tried to run %q without permission", cmd.User.Nick, strings.Join(args, " "))
+		return fmt.Sprintf("%s: You must be in the OPs list to run this command", cmd.User.Nick), nil
+		//fmt.Errorf("%s tried to run %q without permission", cmd.User.Nick, strings.Join(args, " "))
 	}
-
 
 	var retmsg string
 

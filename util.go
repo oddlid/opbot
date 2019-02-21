@@ -3,6 +3,7 @@ package opbot
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	log "github.com/Sirupsen/logrus"
 	glob "github.com/ryanuber/go-glob"
@@ -124,4 +125,14 @@ func okCmd(channel, nick, cmd, arg string) bool {
 		}
 	}
 	return false
+}
+
+func readWhois(timeout time.Duration) *HostMask {
+	select {
+	case hm := <-_wchan:
+		return hm
+	case <-time.After(timeout):
+		return nil
+	}
+	return nil
 }

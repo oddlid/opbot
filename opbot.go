@@ -27,6 +27,7 @@ TODO:
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	log "github.com/Sirupsen/logrus"
 	"github.com/go-chat-bot/bot"
@@ -51,13 +52,14 @@ const (
 )
 
 var (
-	_bot    *bot.Bot
-	_cfg    *irc.Config
-	_conn   *ircevent.Connection
-	_ops    *OPData
-	_opfile string
-	_caller Caller
-	_wchan  = make(chan *HostMask, 2)
+	_bot       *bot.Bot
+	_cfg       *irc.Config
+	_conn      *ircevent.Connection
+	_ops       *OPData
+	_opfile    string
+	_caller    Caller
+	_wcTimeout time.Duration             // how long to wait reading _wchan
+	_wchan     = make(chan *HostMask, 8) // 8 is just a guess, that it should be (more than) enough
 )
 
 func InitBot(b *bot.Bot, cfg *irc.Config, conn *ircevent.Connection, opfile string) error {
@@ -66,15 +68,17 @@ func InitBot(b *bot.Bot, cfg *irc.Config, conn *ircevent.Connection, opfile stri
 	_conn = conn
 	_opfile = opfile
 	_caller = Caller{}
-	reload() // initializes _ops
+	_wcTimeout = 2 * time.Second // adjust as needed
+	reload()                     // initializes _ops
 
-	_conn.AddCallback(JOIN, onJOIN)         // Triggers giving OP is nick is in list
+	_conn.AddCallback(JOIN, onJOIN)         // Triggers giving OP if nick is in list
 	_conn.AddCallback("PRIVMSG", onPRIVMSG) // for keeping track of calling user
 	_conn.AddCallback("311", on311)         // reply from whois when nick found
 	_conn.AddCallback("401", on401)         // reply from whois when nick not found
 
 	register()
 
+	// Maybe I'll change signature to not return anything, as there will never be an error to return...
 	return nil
 }
 
@@ -101,6 +105,7 @@ func onPRIVMSG(e *ircevent.Event) {
 func on311(e *ircevent.Event) {
 	//devdbg("%+v", e)
 	const fn string = "on311()"
+
 	hm := &HostMask{
 		Nick:     e.Arguments[1],
 		UserID:   e.Arguments[2],
@@ -118,6 +123,7 @@ func on311(e *ircevent.Event) {
 // 401 is the reply from WHOIS when nick NOT found
 func on401(e *ircevent.Event) {
 	const fn string = "on401()"
+
 	select {
 	case _wchan <- nil:
 		devdbg("%s: %s: Sent NIL hostmask object on _wchan", PLUGIN, fn)
@@ -128,6 +134,7 @@ func on401(e *ircevent.Event) {
 
 func onJOIN(e *ircevent.Event) {
 	const fn string = "onJOIN()"
+
 	if e.Nick == _conn.GetNick() {
 		devdbg("%s: %s: Seems it's myself joining. e.Nick: %s", PLUGIN, fn, e.Nick)
 		return
@@ -183,6 +190,7 @@ func ls(channel, nick string) string {
 
 func add(channel, nick string) (string, error) {
 	const fn string = "add()"
+
 	if nick == "" {
 		emsg := PLUGIN + ": Cannot add empty nick"
 		return emsg, fmt.Errorf(emsg)
@@ -190,7 +198,7 @@ func add(channel, nick string) (string, error) {
 
 	go func() {
 		devdbg("%s: %s: Goroutine waiting to read from _wchan...", PLUGIN, fn)
-		hm := <-_wchan
+		hm := readWhois(_wcTimeout)
 
 		if hm == nil {
 			devdbg("%s: %s: Got NIL hostmask back on _wchan. %q does not exist on server", PLUGIN, fn, nick)
@@ -333,9 +341,10 @@ func mask(channel, action, nick, hostmask string) (retmsg string, err error) {
 
 func getOP(channel, nick string) (string, error) {
 	const fn string = "getOP()"
+
 	go func() {
 		devdbg("%s: %s: Goroutine waiting to read from _wchan...", PLUGIN, fn)
-		hm := <-_wchan
+		hm := readWhois(_wcTimeout)
 
 		if hm == nil {
 			devdbg("%s: %s: Got NIL hostmask back on _wchan. %q does not exist on server", PLUGIN, fn, nick)
@@ -364,6 +373,7 @@ func getOP(channel, nick string) (string, error) {
 
 func op(cmd *bot.Cmd) (string, error) {
 	const fn string = "op()"
+
 	devdbg("%s: Entered %s with cmd: %#v", PLUGIN, fn, cmd)
 
 	alen := len(cmd.Args)

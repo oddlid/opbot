@@ -1,5 +1,5 @@
 BINARY := opbot
-VERSION := 2019-02-14
+VERSION := 2019-02-21
 SOURCES := main.go
 DEPS :=
 COMMIT_ID := $(shell git describe --tags --always)

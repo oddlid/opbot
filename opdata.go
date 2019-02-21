@@ -33,6 +33,11 @@ type HostMask struct {
 	RealName string `json:"realname"`
 }
 
+type Caller struct {
+	Nick     string
+	Hostmask string
+}
+
 func NewOPData() *OPData {
 	return &OPData{
 		Modified: time.Now(),
@@ -110,10 +115,9 @@ func (c *Channel) MatchHostMask(nick, mask string) bool {
 	if !found {
 		return false
 	}
-	// If nick exists, but have no masks, we allow it.
-	// Might rethink this in the future...
+	// If nick exists, but have no masks, we deny it.
 	if len(maskList) == 0 {
-		return true
+		return false
 	}
 	for _, pattern := range maskList {
 		if matchMask(pattern, mask) {
@@ -134,22 +138,53 @@ func (c *Channel) addNoDup(nick, mask string) bool {
 	c.Lock()
 	defer c.Unlock()
 
-	for i := range c.OPs[nick] {
-		if c.OPs[nick][i] == mask {
-			return false
+	_, found := c.OPs[nick]
+	if found && c.OPs[nick] != nil {
+		for i := range c.OPs[nick] {
+			if c.OPs[nick][i] == mask {
+				return false
+			}
 		}
 	}
 	c.OPs[nick] = append(c.OPs[nick], mask)
 	return true
 }
 
-func (c *Channel) Add(nick, mask string) {
+func (c *Channel) Add(nick, mask string) bool {
 	added := c.addNoDup(nick, mask)
 	if !added {
-		log.Debugf("Channel.Add: Mask %q already in list for %q", mask, nick)
+		log.Debugf("%s: Channel.Add: Mask %q already in list for %q", PLUGIN, mask, nick)
 	} else {
-		log.Debugf("Channel.Add: Added nick %q with mask %q", nick, mask)
+		log.Debugf("%s: Channel.Add: Added nick %q with mask %q", PLUGIN, nick, mask)
 	}
+	return added
+}
+
+func (c *Channel) RemoveHostmask(nick, mask string) bool {
+	c.Lock()
+	defer c.Unlock()
+
+	_, found := c.OPs[nick]
+	if !found {
+		return false
+	}
+	if c.OPs[nick] == nil || len(c.OPs[nick]) == 0 {
+		return false
+	}
+
+	dirty := false
+	newmasks := make([]string, 0, len(c.OPs[nick]))
+	for _, m := range c.OPs[nick] {
+		if m == mask {
+			dirty = true
+			continue
+		}
+		newmasks = append(newmasks, m)
+	}
+	if dirty {
+		c.OPs[nick] = newmasks
+	}
+	return dirty
 }
 
 func (c *Channel) Remove(nick string) {
@@ -167,6 +202,27 @@ func (c *Channel) Nicks() []string {
 	c.RUnlock()
 	sort.Strings(nicks)
 	return nicks
+}
+
+func (c *Channel) Hostmasks(nick string) []string {
+	// This is not thread safe, but recon it'll do for now, as it's for read only use
+	u, found := c.OPs[nick]
+	if !found {
+		return nil
+	}
+	return u
+}
+
+func (c *Channel) ClearHostmasks(nick string) bool {
+	c.Lock()
+	defer c.Unlock()
+
+	_, found := c.OPs[nick]
+	if !found {
+		return false
+	}
+	c.OPs[nick] = nil
+	return true
 }
 
 func (c *Channel) Empty() bool {

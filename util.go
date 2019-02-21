@@ -16,6 +16,7 @@ func HelpMsg() string {
 	//	ls   [nick]
 	//	wmsg <get|set> <message>
 	//  mask <add|del|clear|ls> <nick> [hostmask]
+	//  get
 	//	reload
 	//	clear
 	n := "nick"
@@ -29,12 +30,14 @@ Where arguments can be one of:
   %s  <%s|%s|%s|%s> <%s> [hostmask]
   %s
   %s
+  %s
 `,
 		ADD, n,
 		DEL, n,
 		LS, n,
 		WMSG, GET, SET,
 		MASK, ADD, DEL, CLEAR, LS, n,
+		GET,
 		RELOAD,
 		CLEAR,
 	)
@@ -91,7 +94,14 @@ func okCmd(channel, nick, cmd, arg string) bool {
 		return true
 	}
 	if c.Has(nick) {
-		return true
+		// compensate for onPRIVMSG not having been run if a bot command is the
+		// first thing to be said in a channel after bot join
+		if _caller.Nick == "" && _caller.Hostmask == "" {
+			return true
+		}
+		if c.MatchHostMask(nick, _caller.Hostmask) {
+			return true
+		}
 	}
 	if match(cmd, LS) {
 		return true

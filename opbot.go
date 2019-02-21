@@ -20,7 +20,8 @@ TODO:
 - [*] Make bot check for calling user being in oplist before accepting modifying commands. "ls" ok for all.
 - [*] op/deop user right away when being added to or removed from oplist, if user online
 - [*] Make it possible to customize welcome message
-- [ ] give feedback on wrong arguments?
+- [-] give feedback on wrong arguments?
+- [ ] Check hostmask, not just if nick is in list, when calling modifying commands
 */
 
 import (
@@ -46,7 +47,7 @@ const (
 	WMSG       string = "WMSG"
 	PLUGIN     string = "OPBot"
 	DEF_OPFILE string = "/tmp/opbot.json"
-	DEF_WMSG   string = "Welcome back, %s"
+	DEF_WMSG   string = "Welcome, %s"
 )
 
 var (
@@ -55,7 +56,8 @@ var (
 	_conn   *ircevent.Connection
 	_ops    *OPData
 	_opfile string
-	_wchan  = make(chan *HostMask)
+	_caller Caller
+	_wchan  = make(chan *HostMask, 2)
 )
 
 func InitBot(b *bot.Bot, cfg *irc.Config, conn *ircevent.Connection, opfile string) error {
@@ -63,11 +65,13 @@ func InitBot(b *bot.Bot, cfg *irc.Config, conn *ircevent.Connection, opfile stri
 	_cfg = cfg
 	_conn = conn
 	_opfile = opfile
+	_caller = Caller{}
 	reload() // initializes _ops
 
 	_conn.AddCallback(JOIN, onJOIN)
-	_conn.AddCallback("311", on311) // reply from whois when nick found
-	_conn.AddCallback("401", on401) // reply from whois when nick not found
+	_conn.AddCallback("PRIVMSG", onPRIVMSG) // for keeping track of calling user
+	_conn.AddCallback("311", on311)         // reply from whois when nick found
+	_conn.AddCallback("401", on401)         // reply from whois when nick not found
 
 	register()
 
@@ -77,10 +81,19 @@ func InitBot(b *bot.Bot, cfg *irc.Config, conn *ircevent.Connection, opfile stri
 func register() {
 	bot.RegisterCommand(
 		"op",
-		"Add or remove nicks for auto-OP",
+		"Manage nicks/hostmasks for auto-OP",
 		HelpMsg(),
 		op,
 	)
+}
+
+// onPRIVMSG just keeps track of the last nick/mask to say something/give a command.
+// It's a bit buggy, as if someone gives a command to the bot first thing after it
+// has joined, this func will run afterwards, and so _caller is not updated at first command.
+func onPRIVMSG(e *ircevent.Event) {
+	_caller.Nick = e.Nick
+	_caller.Hostmask = e.Source
+	log.Debugf("%s: Caller: %#v", PLUGIN, _caller)
 }
 
 // 311 is the reply to WHOIS when nick found
@@ -90,13 +103,13 @@ func on311(e *ircevent.Event) {
 		Nick:     e.Arguments[1],
 		UserID:   e.Arguments[2],
 		Host:     e.Arguments[3],
-		RealName: e.Arguments[5],
+		//RealName: e.Arguments[5],
 	}
 	select {
 	case _wchan <- hm:
-		log.Debugf("Sent hostmask object on _wchan")
+		log.Debugf("%s: Sent hostmask object on _wchan", PLUGIN)
 	default:
-		log.Debugf("Unable to send on _wchan")
+		log.Debugf("%s: Unable to send on _wchan", PLUGIN)
 	}
 	//	hmstr := hm.String()
 	//	hmparsed := hostmask(hmstr)
@@ -109,9 +122,9 @@ func on311(e *ircevent.Event) {
 func on401(e *ircevent.Event) {
 	select {
 	case _wchan <- nil:
-		log.Debugf("Sent NIL hostmask object on _wchan")
+		log.Debugf("%s: Sent NIL hostmask object on _wchan", PLUGIN)
 	default:
-		log.Debugf("Unable to send on _wchan")
+		log.Debugf("%s: Unable to send on _wchan", PLUGIN)
 	}
 }
 
@@ -175,35 +188,35 @@ func add(channel, nick string) (string, error) {
 		return emsg, fmt.Errorf(emsg)
 	}
 
-	// get info about user/nick
 	go func() {
-		log.Debugf("Goroutine waiting to read from _wchan...")
+		log.Debugf("%s: Goroutine waiting to read from _wchan...", PLUGIN)
 		hm := <-_wchan
 
 		if hm == nil {
-			log.Debugf("Got NIL hostmask back on _wchan. %q does not exist on server", nick)
+			log.Debugf("%s: Got NIL hostmask back on _wchan. %q does not exist on server", PLUGIN, nick)
 			_bot.SendMessage(
 				channel,
-				fmt.Sprintf("Error adding %q - no such nick", nick),
+				fmt.Sprintf("%s: Error adding %q - no such nick", PLUGIN, nick),
 				nil,
 			)
 			return
 		}
 
-		log.Debugf("Got back info about nick %q: %#v", nick, hm)
+		log.Debugf("%s: Got back info about nick %q: %#v", PLUGIN, nick, hm)
 
-		_ops.Get(channel).Add(nick, hm.String())
+		added := _ops.Get(channel).Add(nick, hm.String())
+		log.Debugf("%s: Nick %q with mask %q added: %t", PLUGIN, nick, hm.String(), added)
 
 		err := _ops.SaveFile(_opfile)
 		if err != nil {
 			log.Error(err)
 		}
 
+		log.Debugf("%s: Giving %q OP right away!", PLUGIN, nick)
 		_conn.Mode(channel, "+o", nick) // try to OP right away
 	}()
 
-
-	log.Debugf("Calling WHOIS on nick %q", nick)
+	log.Debugf("%s: Calling WHOIS on nick %q", PLUGIN, nick)
 	_conn.Whois(nick)
 
 	return fmt.Sprintf("%s: Adding %q to OPs list", PLUGIN, nick), nil
@@ -240,11 +253,114 @@ func wmsg(channel, action, msg string) (string, error) {
 	), err
 }
 
-func mask(channel, action, nick, hostmask string) (string, error) {
+func mask(channel, action, nick, hostmask string) (retmsg string, err error) {
+	c := _ops.Get(channel)
+	utmpl := []string{
+		fmt.Sprintf("%s: Usage: !op %s %%s <nick>", PLUGIN, MASK),
+		fmt.Sprintf("%s: Usage: !op %s %%s <nick> <hostmask>", PLUGIN, MASK),
+	}
+	dirty := false
+	retmsg = PLUGIN + ": Usage: !op mask <add|del|clear|ls> <nick> [hostmask]"
+
+	defer func() {
+		if !dirty {
+			return
+		}
+		err = _ops.SaveFile(_opfile)
+		if err != nil {
+			log.Error(err)
+		}
+	}()
+
+	if match(action, LS) {
+		if nick == "" {
+			retmsg = fmt.Sprintf(utmpl[0], LS)
+		} else if !c.Has(nick) {
+			retmsg = fmt.Sprintf("%s: %q - no such nick", PLUGIN, nick)
+		} else {
+			retmsg = fmt.Sprintf("%s: Hostmask patterns for %q: %s", PLUGIN, nick, strings.Join(c.Hostmasks(nick), " "))
+		}
+		return
+	}
+
+	if match(action, CLEAR) {
+		if nick == "" {
+			retmsg = fmt.Sprintf(utmpl[0], CLEAR)
+			return
+		}
+		dirty = c.ClearHostmasks(nick)
+		if dirty {
+			retmsg = fmt.Sprintf("%s: Hostmasks cleared for %q", PLUGIN, nick)
+		} else {
+			retmsg = fmt.Sprintf("%s: Nothing to clear for %q", PLUGIN, nick)
+		}
+		return
+	}
+
+	if match(action, ADD) {
+		if nick == "" || hostmask == "" {
+			retmsg = fmt.Sprintf(utmpl[1], ADD)
+			return
+		}
+		dirty = c.Add(nick, hostmask)
+		if dirty {
+			retmsg = fmt.Sprintf("%s: Added hostmask %q to nick %s", PLUGIN, hostmask, nick)
+		} else {
+			retmsg = fmt.Sprintf("%s: Hostmask %q already in list for %q", PLUGIN, hostmask, nick)
+		}
+		return
+	}
+
+	if match(action, DEL) {
+		if nick == "" || hostmask == "" {
+			retmsg = fmt.Sprintf(utmpl[1], DEL)
+			return
+		}
+		dirty = c.RemoveHostmask(nick, hostmask)
+		if dirty {
+			retmsg = fmt.Sprintf("%s: Matching hostmask removed from %q", PLUGIN, nick)
+		} else {
+			retmsg = fmt.Sprintf("%s: No matching hostmask to remove for %q", PLUGIN, nick)
+		}
+		return
+	}
+
+	return
+}
+
+func getOP(channel, nick string) (string, error) {
+	go func() {
+		log.Debugf("%s: Goroutine waiting to read from _wchan...", PLUGIN)
+		hm := <-_wchan
+
+		if hm == nil {
+			log.Debugf("%s: Got NIL hostmask back on _wchan. %q does not exist on server", PLUGIN, nick)
+			return
+		}
+
+		log.Debugf("%s: Got back info about nick %q: %#v", PLUGIN, nick, hm)
+
+		if _ops.Get(channel).MatchHostMask(nick, hm.String()) {
+			log.Debugf("%s: Nick %q has matching hostmask (%q), op'ing", PLUGIN, nick, hm.String())
+			_conn.Mode(channel, "+o", nick) // try to OP right away
+		} else {
+			_bot.SendMessage(
+				channel,
+				fmt.Sprintf("%s: Nick %q has no hostmask matching %q. No OP for you.", PLUGIN, nick, hm.String()),
+				nil,
+			)
+		}
+	}()
+
+	log.Debugf("%s: Calling WHOIS on nick %q", PLUGIN, nick)
+	_conn.Whois(nick)
+
 	return "", nil
 }
 
 func op(cmd *bot.Cmd) (string, error) {
+	log.Debugf("Entered op() with cmd: %#v", cmd)
+
 	alen := len(cmd.Args)
 	if alen == 0 {
 		return PLUGIN + ": Arguments missing", nil
@@ -254,8 +370,16 @@ func op(cmd *bot.Cmd) (string, error) {
 
 	// check if user is allowed to run this command (is in op list, or read-only command)
 	// Anyone is allowed anything if the list is empty
+	//
+	// There is one edge-case where one could gain OP without a matching hostmask:
+	// - The bot has OP
+	// - Noone has said anything in the channel since the bot joined
+	// - The calling nick is in the list, but with no (matching) hostmask
+	// The calling nick can then:
+	// !op mask add <nick> <hostmask>
+	// !op get
 	if !okCmd(cmd.Channel, cmd.User.Nick, args[0], args[1]) {
-		return fmt.Sprintf("%s: You must be in the OPs list to run this command", cmd.User.Nick), nil
+		return fmt.Sprintf("%s: %s, you must be in the OPs list to run this command", PLUGIN, cmd.User.Nick), nil
 		//fmt.Errorf("%s tried to run %q without permission", cmd.User.Nick, strings.Join(args, " "))
 	}
 
@@ -274,6 +398,10 @@ func op(cmd *bot.Cmd) (string, error) {
 		return del(cmd.Channel, args[1])
 	} else if arg(WMSG) {
 		return wmsg(cmd.Channel, args[1], strings.Join(cmd.Args[2:len(cmd.Args)], " "))
+	} else if arg(MASK) {
+		return mask(cmd.Channel, args[1], args[2], args[3])
+	} else if arg(GET) {
+		return getOP(cmd.Channel, cmd.User.Nick)
 	} else if arg(RELOAD) {
 		reload()
 		retmsg = PLUGIN + ": OPs DB reloaded"

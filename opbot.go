@@ -93,12 +93,12 @@ func register() {
 func onPRIVMSG(e *ircevent.Event) {
 	_caller.Nick = e.Nick
 	_caller.Hostmask = e.Source
-	log.Debugf("%s: Caller: %#v", PLUGIN, _caller)
+	devdbg("%s: Caller: %#v", PLUGIN, _caller)
 }
 
 // 311 is the reply to WHOIS when nick found
 func on311(e *ircevent.Event) {
-	//log.Debugf("%+v", e)
+	//devdbg("%+v", e)
 	hm := &HostMask{
 		Nick:     e.Arguments[1],
 		UserID:   e.Arguments[2],
@@ -107,51 +107,51 @@ func on311(e *ircevent.Event) {
 	}
 	select {
 	case _wchan <- hm:
-		log.Debugf("%s: Sent hostmask object on _wchan", PLUGIN)
+		devdbg("%s: Sent hostmask object on _wchan", PLUGIN)
 	default:
-		log.Debugf("%s: Unable to send on _wchan", PLUGIN)
+		devdbg("%s: Unable to send on _wchan", PLUGIN)
 	}
 	//	hmstr := hm.String()
 	//	hmparsed := hostmask(hmstr)
-	//	log.Debugf("Hostmask orig: %#v", hm)
-	//	log.Debugf("Hostmask string: %s", hmstr)
-	//	log.Debugf("HostMask struct, parsed back: %#v", hmparsed)
+	//	devdbg("Hostmask orig: %#v", hm)
+	//	devdbg("Hostmask string: %s", hmstr)
+	//	devdbg("HostMask struct, parsed back: %#v", hmparsed)
 }
 
 // 401 is the reply from WHOIS when nick NOT found
 func on401(e *ircevent.Event) {
 	select {
 	case _wchan <- nil:
-		log.Debugf("%s: Sent NIL hostmask object on _wchan", PLUGIN)
+		devdbg("%s: Sent NIL hostmask object on _wchan", PLUGIN)
 	default:
-		log.Debugf("%s: Unable to send on _wchan", PLUGIN)
+		devdbg("%s: Unable to send on _wchan", PLUGIN)
 	}
 }
 
 func onJOIN(e *ircevent.Event) {
 	if e.Nick == _conn.GetNick() {
-		log.Debugf("%s: Seems it's myself joining. e.Nick: %s", PLUGIN, e.Nick)
+		devdbg("%s: Seems it's myself joining. e.Nick: %s", PLUGIN, e.Nick)
 		return
 	}
 
 	c := _ops.Get(e.Arguments[0])
 	if c.Empty() {
-		log.Debugf("%s: OPs list is empty, nothing to do", PLUGIN)
+		devdbg("%s: OPs list is empty, nothing to do", PLUGIN)
 		return
 	}
 
 	if !c.Has(e.Nick) {
-		log.Debugf("%s: %s not in OPs list, ignoring", PLUGIN, e.Nick)
+		devdbg("%s: %s not in OPs list, ignoring", PLUGIN, e.Nick)
 		return
 	}
 
 	if !c.MatchHostMask(e.Nick, e.Source) {
-		log.Debugf("%s: No match on hostmask %q for nick %q", PLUGIN, e.Source, e.Nick)
+		devdbg("%s: No match on hostmask %q for nick %q", PLUGIN, e.Source, e.Nick)
 		return
 	}
 
 	// Set OP for nick
-	log.Debugf("%s: Setting mode %q for %q in %q", PLUGIN, "+o", e.Nick, e.Arguments[0])
+	devdbg("%s: Setting mode %q for %q in %q", PLUGIN, "+o", e.Nick, e.Arguments[0])
 	_conn.Mode(e.Arguments[0], "+o", e.Nick)
 
 	// Welcome the OP user, if welcome message is configured
@@ -189,11 +189,11 @@ func add(channel, nick string) (string, error) {
 	}
 
 	go func() {
-		log.Debugf("%s: Goroutine waiting to read from _wchan...", PLUGIN)
+		devdbg("%s: Goroutine waiting to read from _wchan...", PLUGIN)
 		hm := <-_wchan
 
 		if hm == nil {
-			log.Debugf("%s: Got NIL hostmask back on _wchan. %q does not exist on server", PLUGIN, nick)
+			devdbg("%s: Got NIL hostmask back on _wchan. %q does not exist on server", PLUGIN, nick)
 			_bot.SendMessage(
 				channel,
 				fmt.Sprintf("%s: Error adding %q - no such nick", PLUGIN, nick),
@@ -202,21 +202,21 @@ func add(channel, nick string) (string, error) {
 			return
 		}
 
-		log.Debugf("%s: Got back info about nick %q: %#v", PLUGIN, nick, hm)
+		devdbg("%s: Got back info about nick %q: %#v", PLUGIN, nick, hm)
 
 		added := _ops.Get(channel).Add(nick, hm.String())
-		log.Debugf("%s: Nick %q with mask %q added: %t", PLUGIN, nick, hm.String(), added)
+		devdbg("%s: Nick %q with mask %q added: %t", PLUGIN, nick, hm.String(), added)
 
 		err := _ops.SaveFile(_opfile)
 		if err != nil {
 			log.Error(err)
 		}
 
-		log.Debugf("%s: Giving %q OP right away!", PLUGIN, nick)
+		devdbg("%s: Giving %q OP right away!", PLUGIN, nick)
 		_conn.Mode(channel, "+o", nick) // try to OP right away
 	}()
 
-	log.Debugf("%s: Calling WHOIS on nick %q", PLUGIN, nick)
+	devdbg("%s: Calling WHOIS on nick %q", PLUGIN, nick)
 	_conn.Whois(nick)
 
 	return fmt.Sprintf("%s: Adding %q to OPs list", PLUGIN, nick), nil
@@ -330,18 +330,18 @@ func mask(channel, action, nick, hostmask string) (retmsg string, err error) {
 
 func getOP(channel, nick string) (string, error) {
 	go func() {
-		log.Debugf("%s: Goroutine waiting to read from _wchan...", PLUGIN)
+		devdbg("%s: Goroutine waiting to read from _wchan...", PLUGIN)
 		hm := <-_wchan
 
 		if hm == nil {
-			log.Debugf("%s: Got NIL hostmask back on _wchan. %q does not exist on server", PLUGIN, nick)
+			devdbg("%s: Got NIL hostmask back on _wchan. %q does not exist on server", PLUGIN, nick)
 			return
 		}
 
-		log.Debugf("%s: Got back info about nick %q: %#v", PLUGIN, nick, hm)
+		devdbg("%s: Got back info about nick %q: %#v", PLUGIN, nick, hm)
 
 		if _ops.Get(channel).MatchHostMask(nick, hm.String()) {
-			log.Debugf("%s: Nick %q has matching hostmask (%q), op'ing", PLUGIN, nick, hm.String())
+			devdbg("%s: Nick %q has matching hostmask (%q), op'ing", PLUGIN, nick, hm.String())
 			_conn.Mode(channel, "+o", nick) // try to OP right away
 		} else {
 			_bot.SendMessage(
@@ -352,14 +352,14 @@ func getOP(channel, nick string) (string, error) {
 		}
 	}()
 
-	log.Debugf("%s: Calling WHOIS on nick %q", PLUGIN, nick)
+	devdbg("%s: Calling WHOIS on nick %q", PLUGIN, nick)
 	_conn.Whois(nick)
 
 	return "", nil
 }
 
 func op(cmd *bot.Cmd) (string, error) {
-	log.Debugf("Entered op() with cmd: %#v", cmd)
+	devdbg("Entered op() with cmd: %#v", cmd)
 
 	alen := len(cmd.Args)
 	if alen == 0 {

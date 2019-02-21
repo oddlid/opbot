@@ -98,7 +98,7 @@ func (o *OPData) SaveFile(filename string) error {
 func (o *OPData) Get(channel string) *Channel {
 	c, found := o.Channels[channel]
 	if !found {
-		log.Debugf("%s: Creating channel %q with empty oplist", PLUGIN, channel)
+		devdbg("%s: Creating channel %q with empty oplist", PLUGIN, channel)
 		c = &Channel{
 			OPs: make(map[string][]string),
 		}
@@ -153,9 +153,9 @@ func (c *Channel) addNoDup(nick, mask string) bool {
 func (c *Channel) Add(nick, mask string) bool {
 	added := c.addNoDup(nick, mask)
 	if !added {
-		log.Debugf("%s: Channel.Add: Mask %q already in list for %q", PLUGIN, mask, nick)
+		devdbg("%s: Channel.Add: Mask %q already in list for %q", PLUGIN, mask, nick)
 	} else {
-		log.Debugf("%s: Channel.Add: Added nick %q with mask %q", PLUGIN, nick, mask)
+		devdbg("%s: Channel.Add: Added nick %q with mask %q", PLUGIN, nick, mask)
 	}
 	return added
 }

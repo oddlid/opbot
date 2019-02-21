@@ -47,16 +47,16 @@ func matchMask(pattern, mask string) bool {
 	return glob.Glob(pattern, mask)
 }
 
-func hostmask(mask string) *HostMask {
-	parts := strings.Split(mask, "@")
-	uparts := strings.Split(parts[0], "!")
-
-	return &HostMask{
-		Nick:   uparts[0],
-		UserID: uparts[1],
-		Host:   parts[1],
-	}
-}
+//func hostmask(mask string) *HostMask {
+//	parts := strings.Split(mask, "@")
+//	uparts := strings.Split(parts[0], "!")
+//
+//	return &HostMask{
+//		Nick:   uparts[0],
+//		UserID: uparts[1],
+//		Host:   parts[1],
+//	}
+//}
 
 func reload() {
 	_ops = NewOPData().LoadFile(_opfile)
@@ -99,10 +99,17 @@ func okCmd(channel, nick, cmd, arg string) bool {
 		if _caller.Nick == "" && _caller.Hostmask == "" {
 			return true
 		}
+		// If nick and _caller.Nick are not the same, we are not in sync, and can
+		// not check reliably against hostmask
+		if nick != _caller.Nick {
+			return true
+		}
+		// At this point it should be ok to check against hostmask
 		if c.MatchHostMask(nick, _caller.Hostmask) {
 			return true
 		}
 	}
+	// Read only commands are always OK
 	if match(cmd, LS) {
 		return true
 	}

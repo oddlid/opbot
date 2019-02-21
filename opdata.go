@@ -30,7 +30,7 @@ type HostMask struct {
 	Nick     string `json:"nick"`
 	UserID   string `json:"userid"`
 	Host     string `json:"host"`
-	RealName string `json:"realname"`
+	//RealName string `json:"realname"`
 }
 
 type Caller struct {
@@ -96,9 +96,10 @@ func (o *OPData) SaveFile(filename string) error {
 }
 
 func (o *OPData) Get(channel string) *Channel {
+	const fn string = "OPData.Get()"
 	c, found := o.Channels[channel]
 	if !found {
-		devdbg("%s: Creating channel %q with empty oplist", PLUGIN, channel)
+		devdbg("%s: %s: Creating channel %q with empty oplist", PLUGIN, fn, channel)
 		c = &Channel{
 			OPs: make(map[string][]string),
 		}
@@ -151,11 +152,12 @@ func (c *Channel) addNoDup(nick, mask string) bool {
 }
 
 func (c *Channel) Add(nick, mask string) bool {
+	const fn string = "Channel.Add()"
 	added := c.addNoDup(nick, mask)
 	if !added {
-		devdbg("%s: Channel.Add: Mask %q already in list for %q", PLUGIN, mask, nick)
+		devdbg("%s: %s: Mask %q already in list for %q", PLUGIN, fn, mask, nick)
 	} else {
-		devdbg("%s: Channel.Add: Added nick %q with mask %q", PLUGIN, nick, mask)
+		devdbg("%s: %s: Added nick %q with mask %q", PLUGIN, fn, nick, mask)
 	}
 	return added
 }
@@ -205,7 +207,9 @@ func (c *Channel) Nicks() []string {
 }
 
 func (c *Channel) Hostmasks(nick string) []string {
-	// This is not thread safe, but recon it'll do for now, as it's for read only use
+	c.RLock()
+	defer c.RUnlock()
+
 	u, found := c.OPs[nick]
 	if !found {
 		return nil
@@ -226,10 +230,15 @@ func (c *Channel) ClearHostmasks(nick string) bool {
 }
 
 func (c *Channel) Empty() bool {
+	c.RLock()
+	defer c.RUnlock()
 	return len(c.OPs) == 0
 }
 
 func (c *Channel) GetWMsg(nick string) string {
+	c.RLock()
+	defer c.RUnlock()
+
 	if nick != "" && strings.Index(c.WelcomeMsg, "%s") > -1 {
 		return fmt.Sprintf(c.WelcomeMsg, nick)
 	}

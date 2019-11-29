@@ -7,7 +7,7 @@ import (
 	"os"
 	"time"
 
-	log "github.com/Sirupsen/logrus"
+	log "github.com/sirupsen/logrus"
 	//"github.com/go-chat-bot/bot"
 	"github.com/go-chat-bot/bot/irc"
 	"github.com/oddlid/opbot"

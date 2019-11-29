@@ -29,7 +29,7 @@ import (
 	"strings"
 	"time"
 
-	log "github.com/Sirupsen/logrus"
+	log "github.com/sirupsen/logrus"
 	"github.com/go-chat-bot/bot"
 	"github.com/go-chat-bot/bot/irc"
 	ircevent "github.com/thoj/go-ircevent"
